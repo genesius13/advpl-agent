@@ -13,6 +13,11 @@ import { promises as fs } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import yaml from "js-yaml";
+import { SenseiLinter } from "./linter.js";
+import { BoilerplateGenerator } from "./boilerplates.js";
+import { SXTool } from "./sx-tool.js";
+import { SnippetsGenerator } from "./snippets-generator.js";
+import { TemplateValidator } from "./template-validator.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -48,7 +53,7 @@ function parseFrontmatter(content: string): { metadata: MarkdownMetadata; body: 
 const server = new Server(
   {
     name: "advpl-sensei",
-    version: "1.1.0",
+    version: "1.1.4",
   },
   {
     capabilities: {
@@ -116,17 +121,26 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
         const name = file.replace(".md", "");
         const content = await fs.readFile(path.join(commandsDir, file), "utf-8");
         const { metadata } = parseFrontmatter(content);
-        
+        const rawParams = metadata.parameters || undefined;
+        const properties: Record<string, any> = {};
+        if (rawParams) {
+          for (const [k, v] of Object.entries(rawParams)) {
+            const { required: _req, ...rest } = v as any;
+            properties[k] = rest;
+          }
+        }
+        const defaultProperties = {
+          prompt: { type: "string", description: "O prompt ou instrução para o comando" },
+          args: { type: "string", description: "Argumentos adicionais (opcional)" },
+        };
+
         tools.push({
           name: `advpl_${name}`,
           description: metadata.description || `Command ${name}`,
           inputSchema: {
             type: "object",
-            properties: metadata.parameters || {
-              prompt: { type: "string", description: "O prompt ou instrução para o comando" },
-              args: { type: "string", description: "Argumentos adicionais (opcional)" },
-            },
-            required: metadata.parameters ? Object.keys(metadata.parameters).filter(k => metadata.parameters![k].required !== false) : ["prompt"],
+            properties: rawParams ? properties : defaultProperties,
+            required: rawParams ? Object.keys(rawParams).filter(k => (rawParams as any)[k].required !== false) : ["prompt"],
           },
         });
       }
@@ -163,7 +177,262 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
   const toolParametersSchema = metadata.parameters || {};
   const receivedArguments = request.params.arguments || {};
 
-  // Constrói uma resposta mais descritiva
+  // --- Lógica REAL para ferramentas específicas ---
+  
+  // 1. LINT
+  if (toolName === "advpl_lint") {
+    const source = receivedArguments.source as string;
+    const filename = (receivedArguments.filename as string) || "source.prw";
+    
+    if (!source) {
+      return {
+        content: [{ type: "text", text: "Erro: O argumento 'source' é obrigatório para a ferramenta lint." }],
+        isError: true
+      };
+    }
+
+    const result = SenseiLinter.lint(source, filename);
+    
+    if (result.issues.length === 0) {
+      return {
+        content: [{ type: "text", text: "✅ Nenhum problema encontrado! O código segue as regras de ouro do Sensei." }]
+      };
+    }
+
+    let response = `🔍 Resultado do Lint para \`${filename}\`:\n\n`;
+    result.issues.forEach(issue => {
+      const icon = issue.severity === "error" ? "❌" : "⚠️";
+      response += `${icon} [${issue.code}] Linha ${issue.line}: ${issue.message}\n`;
+    });
+
+    return {
+      content: [{ type: "text", text: response }]
+    };
+  }
+
+  // 2. GENERATE (Boilerplate)
+  if (toolName === "advpl_generate") {
+    const type = receivedArguments.type as string;
+    const name = receivedArguments.name as string;
+    const module = (receivedArguments.module as string) || "GEN";
+    const lang = (receivedArguments.lang as string) || "advpl";
+    const outputDir = (receivedArguments.outputDir as string) || process.cwd();
+
+    if (!type || !name) {
+      return {
+        content: [{ type: "text", text: "Erro: Argumentos 'type' e 'name' são obrigatórios para a ferramenta generate." }],
+        isError: true
+      };
+    }
+
+    const boilerplate = BoilerplateGenerator.generate(type, name, module, lang);
+    
+    // Phase 5: Verificar se há erros de validação
+    let validationMessage = "";
+    if (boilerplate.validation && !boilerplate.validation.valid) {
+      const errorCount = boilerplate.validation.statistics.errorCount;
+      validationMessage = `\n\n⚠️ **Validation Issues Found (${errorCount} errors):**\n`;
+      
+      boilerplate.validation.issues
+        .filter(issue => issue.severity === "error")
+        .forEach(issue => {
+          validationMessage += `- 🔴 **Line ${issue.line}**: ${issue.message}\n`;
+          if (issue.suggestion) {
+            validationMessage += `  💡 ${issue.suggestion}\n`;
+          }
+        });
+      
+      validationMessage += `\n**Recomendação:** Revise o template antes de usar em produção.`;
+    }
+
+    const fullPath = path.join(outputDir, boilerplate.filename);
+
+    try {
+      await fs.writeFile(fullPath, boilerplate.content, "utf-8");
+      
+      let successMessage = `🚀 Boilerplate gerado com sucesso!\n\n**Arquivo:** \`${boilerplate.filename}\`\n**Local:** \`${fullPath}\`\n\nAgora o LLM pode prosseguir com a implementação da lógica de negócio solicitada.`;
+      
+      if (validationMessage) {
+        successMessage += validationMessage;
+      } else if (boilerplate.validation?.valid) {
+        successMessage += `\n\n✅ **Template validation passed** - Código pronto para compilação!`;
+      }
+      
+      return {
+        content: [{ type: "text", text: successMessage }]
+      };
+    } catch (e: any) {
+      return {
+        content: [{ type: "text", text: `Erro ao criar arquivo de boilerplate: ${e.message}` }],
+        isError: true
+      };
+    }
+  }
+
+  // 3. SX TOOL (Consulta ao dicionário)
+  if (toolName === "advpl_sx") {
+    const action = (receivedArguments.action as string) || "tables";
+    const query = (receivedArguments.query as string) || "";
+    const format = (receivedArguments.format as string) || "markdown";
+
+    let response = "";
+
+    switch (action.toLowerCase()) {
+      case "list_tables":
+        const tables = SXTool.getAllTables();
+        response = "## Tabelas Disponíveis\n\n";
+        tables.forEach(table => {
+          response += `- **${table.alias}**: ${table.description}\n`;
+        });
+        break;
+
+      case "get_table":
+        if (!query) {
+          return {
+            content: [{ type: "text", text: "Erro: 'query' é obrigatório para listar campos de uma tabela." }],
+            isError: true
+          };
+        }
+        response = SXTool.formatTableSummary(query);
+        break;
+
+      case "search_fields":
+        if (!query) {
+          return {
+            content: [{ type: "text", text: "Erro: 'query' é obrigatório para buscar campos." }],
+            isError: true
+          };
+        }
+        const parts = query.split("|");
+        const table = parts[0] || "";
+        const pattern = parts[1] || "*";
+        const fields = SXTool.searchFields(table, pattern);
+        if (fields.length === 0) {
+          response = `Nenhum campo encontrado em '${table}' correspondendo ao padrão '${pattern}'.`;
+        } else {
+          response = `## Campos Encontrados em ${table}\n\n`;
+          fields.forEach(field => {
+            response += `- **${field.name}** (${field.type}${field.size}): ${field.title}\n`;
+          });
+        }
+        break;
+
+      case "get_parameters":
+        const module = query || "";
+        response = SXTool.formatParametersByModule(module || undefined);
+        break;
+
+      case "get_generic_table":
+        if (!query) {
+          return {
+            content: [{ type: "text", text: "Erro: 'query' é obrigatório para buscar tabela genérica." }],
+            isError: true
+          };
+        }
+        const genTable = SXTool.getGenericTable(query);
+        if (!genTable) {
+          response = `Tabela genérica '${query}' não encontrada.`;
+        } else {
+          response = `## Tabela Genérica: ${genTable.code} - ${genTable.description}\n\n`;
+          genTable.entries.forEach(entry => {
+            response += `- **${entry.key}**: ${entry.label}\n`;
+          });
+        }
+        break;
+
+      case "export":
+        const exportType = query || "tables";
+        const json = SXTool.exportAsJson(exportType as any);
+        response = `\`\`\`json\n${json}\n\`\`\``;
+        format === "markdown" ? undefined : (response = json);
+        break;
+
+      default:
+        response = "Ação desconhecida. Use: list_tables, get_table, search_fields, get_parameters, get_generic_table ou export.";
+    }
+
+    return {
+      content: [{ type: "text", text: response }]
+    };
+  }
+
+  // 4. SNIPPETS (Gerador de snippets VS Code)
+  if (toolName === "advpl_snippets") {
+    const action = (receivedArguments.action as string) || "list";
+    const output = (receivedArguments.output as string) || "";
+    const outputDir = (receivedArguments.outputDir as string) || process.cwd();
+
+    let response = "";
+
+    switch (action.toLowerCase()) {
+      case "list":
+        response = "## Snippets Disponíveis\n\n";
+        const snippets = SnippetsGenerator.generateSnippets();
+        Object.values(snippets).forEach(snippet => {
+          response += `- \`${snippet.prefix}\`: ${snippet.description}\n`;
+        });
+        break;
+
+      case "generate_vscode":
+        const vscodeContent = SnippetsGenerator.generateVscodeSnippetsFile();
+        const outputPath = output || path.join(outputDir, ".vscode", "advpl-sensei.code-snippets");
+        const outputDir2 = path.dirname(outputPath);
+        
+        try {
+          await fs.mkdir(outputDir2, { recursive: true });
+          await fs.writeFile(outputPath, vscodeContent, "utf-8");
+          response = `✅ Arquivo de snippets gerado com sucesso!\n\n**Local:** \`${outputPath}\`\n\nAgora você pode usar os snippets no VS Code digitando os prefixos (ex: \`advpl_func\`).`;
+        } catch (e: any) {
+          return {
+            content: [{ type: "text", text: `Erro ao criar arquivo de snippets: ${e.message}` }],
+            isError: true
+          };
+        }
+        break;
+
+      case "export_json":
+        const json = SnippetsGenerator.exportAsJson();
+        response = `\`\`\`json\n${json}\n\`\`\``;
+        break;
+
+      case "export_markdown":
+        response = SnippetsGenerator.generateMarkdownReference();
+        break;
+
+      default:
+        response = "Ação desconhecida. Use: list, generate_vscode, export_json ou export_markdown.";
+    }
+
+    return {
+      content: [{ type: "text", text: response }]
+    };
+  }
+
+  if (toolName === "advpl_validate") {
+    const code = (receivedArguments.code as string) || "";
+    const language = (receivedArguments.language as string) || "auto";
+    const filename = (receivedArguments.filename as string) || "template.prw";
+
+    if (!code) {
+      return {
+        content: [{ type: "text", text: "❌ Erro: parâmetro 'code' é obrigatório" }],
+        isError: true
+      };
+    }
+
+    const validLanguage = (language === "advpl" || language === "tlpp" ? language : undefined) as "advpl" | "tlpp" | undefined;
+    const result = TemplateValidator.validate(code, filename, validLanguage);
+    const report = TemplateValidator.generateReport(result);
+
+    return {
+      content: [{ 
+        type: "text", 
+        text: result.valid ? `✅ Template Válido\n${report}` : `❌ Template Inválido\n${report}`
+      }]
+    };
+  }
+
+  // --- Placeholder para outras ferramentas ---
   let responseText = `Chamada da Ferramenta: \`${toolName}\`\n`;
   responseText += `Descrição: ${toolDescription}\n\n`;
   responseText += `Argumentos Recebidos:\n`;
@@ -256,6 +525,7 @@ server.setRequestHandler(GetPromptRequestSchema, async (request) => {
 
 async function main() {
   const transport = new StdioServerTransport();
+  console.log(`MCP server 'advpl-sensei' iniciado — aguardando conexão via stdin/stdout...`);
   await server.connect(transport);
 }
 
