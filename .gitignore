@@ -19,3 +19,7 @@ Thumbs.db
 
 # Project Specific
 plans/*.log
+
+advpl
+
+.gitignore

@@ -97,11 +97,13 @@ WsMethod GET WsReceive nPage, nPageSize WsService CUSTOMERS
 
 Return lRet
 ```
-
 ### 1.3 POST Method - Create
+
+**IMPORTANT:** While the example below uses `RecLock` for simple entities like `SA1`, you MUST use `MSExecAuto` for complex business entities (Sales Orders, Purchase Orders, Invoices). Refer to `patterns-execauto.md` for details.
 
 ```advpl
 WsMethod POST WsService CUSTOMERS
+```
     Local lRet     := .T.
     Local oJson    := JsonObject():New()
     Local oResp    := Nil

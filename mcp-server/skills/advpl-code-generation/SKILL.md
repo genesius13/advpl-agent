@@ -19,7 +19,18 @@ Patterns and templates for generating clean, standardized ADVPL and TLPP code fo
 - Creating SOAP Web Services
 - Any new .prw or .tlpp file creation
 
+## Critical Rules (MANDATORY)
+
+1. **Anti-Hallucination**: Never use functions not found in the TDN or the local Function Registry (e.g., `HttpServer`).
+2. **ExecAuto vs RecLock**:
+   - **NEVER** use `RecLock` to create or update records in core business tables (SC5, SC6, SC7, SD1, SD2, SF1, SF2, SE1, SE2, SB1).
+   - **ALWAYS** use `MSExecAuto` (e.g., `MATA410` for Sales Orders) for these entities to ensure field validation, triggers, and data integrity.
+   - Refer to `patterns-execauto.md` for implementation details.
+3. **Variable Scope**: Always use `Local`. Never use `Public`. Avoid `Private` except for ExecAuto control variables (`lMsErroAuto`).
+4. **Hungarian Notation**: Strictly follow the naming conventions below.
+
 ## Naming Conventions
+... (rest of the file)
 
 | Element | Convention | Example |
 |---------|-----------|---------|
