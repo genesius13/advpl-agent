@@ -76,6 +76,33 @@ No seu `mcp_settings.json`:
 
 ---
 
+## 💡 Exemplos de Uso
+
+Abaixo estão alguns exemplos de como você pode interagir com o Sensei através do seu assistente de IA:
+
+### 🛠️ Geração de Código Inteligente
+* **User Function:** "Sensei, gere uma **User Function** para o módulo de **Faturamento** que realize o cálculo de comissão progressiva. Salve como `FATA001.prw`. Certifique-se de salvar e restaurar a área e usar tratamento de erros."
+* **Estrutura MVC:** "Crie uma estrutura **MVC completa** para um cadastro de 'Controle de Visitas' (tabela `SZ1`). Inclua `MenuDef`, `ModelDef` com validação no `Commit` e `ViewDef` com dois boxes horizontais."
+* **REST API:** "Gere um endpoint **REST em TLPP** para consulta de estoque, utilizando a classe `JsonObject` e seguindo os padrões de segurança do Sensei."
+
+### 🛡️ Validação e Qualidade (TDN)
+* **Checkup Técnico:** "Valide o código abaixo contra o **TDN** e verifique se estou usando alguma função fictícia ou depreciada: [cole seu código aqui]"
+* **Anti-Hallucination:** "Esta função `HttpServer()` existe no ADVPL nativo ou é uma alucinação? Se não existir, qual a alternativa correta para criar um serviço REST?"
+
+### 🔍 Consulta ao Dicionário (SX)
+* **Dicionário de Dados:** "Quais são os campos obrigatórios da tabela **SA1** (Clientes) e qual a chave primária?"
+* **Parâmetros:** "Como configurar o parâmetro **MV_ESTADO** para que o sistema assuma 'SP' como padrão?"
+* **Gatilhos:** "Explique como criar um gatilho na **SX7** para que, ao preencher o campo `A1_CEP`, o campo `A1_MUN` seja preenchido automaticamente."
+
+### 🚀 Modernização e Refatoração
+* **Migração TLPP:** "Migre esta função procedural antiga para uma **Classe TLPP** moderna, usando `namespace` e tipos Fortes (`as String`, `as Numeric`)."
+* **Code Review:** "Revise este fonte `.prw` e aplique as **24 regras de ouro** do Sensei, focando em performance de banco de dados (TopConn)."
+
+### 🐞 Diagnóstico e Debug
+* **Troubleshooting:** "Estou recebendo o erro `Alias does not exist: SA1` na linha 150. O que pode estar causando isso e como posso prevenir usando as ferramentas do Sensei?"
+
+---
+
 ## ✅ Maturidade do Projeto
 
 | Fase | Entrega | Status |
